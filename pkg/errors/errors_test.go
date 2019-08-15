@@ -1,4 +1,4 @@
-// Copyright © 2018 The Knative Authors
+// Copyright © 2019 The Knative Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plugin
+package errors
 
 import (
-	"github.com/spf13/cobra"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"testing"
+
+	"gotest.tools/assert"
 )
 
-// PluginFlags contains all PLugin commands flags
-type PluginFlags struct {
-	NameOnly bool
+func TestNewInvalidCRD(t *testing.T) {
+	err := newInvalidCRD("serving.knative.dev")
+	assert.Error(t, err, "no Knative serving API found on the backend. Please verify the installation.")
 
-	Verifier    PathVerifier
-	PluginPaths []string
+	err = newInvalidCRD("serving")
+	assert.Error(t, err, "no Knative serving API found on the backend. Please verify the installation.")
 
-	genericclioptions.IOStreams
-}
+	err = newInvalidCRD("")
+	assert.Error(t, err, "no Knative  API found on the backend. Please verify the installation.")
 
-// AddPluginFlags adds the various flags to plugin command
-func (p *PluginFlags) AddPluginFlags(command *cobra.Command) {
-	command.Flags().BoolVar(&p.NameOnly, "name-only", false, "If true, display only the binary name of each plugin, rather than its full path")
 }

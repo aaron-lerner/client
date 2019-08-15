@@ -1,4 +1,4 @@
-// Copyright © 2018 The Knative Authors
+// Copyright © 2019 The Knative Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,36 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plugin
+package errors
 
 import (
 	"testing"
 
-	"github.com/spf13/cobra"
 	"gotest.tools/assert"
 )
 
-func TestAddPluginFlags(t *testing.T) {
-	var (
-		pluginFlags *PluginFlags
-		cmd         *cobra.Command
-	)
+func TestNewKNError(t *testing.T) {
+	err := NewKNError("myerror")
+	assert.Error(t, err, "myerror")
 
-	setup := func() {
-		pluginFlags = &PluginFlags{}
+	err = NewKNError("")
+	assert.Error(t, err, "")
+}
 
-		cmd = &cobra.Command{}
-	}
+func TestKNError_Error(t *testing.T) {
+	err := NewKNError("myerror")
+	assert.Equal(t, err.Error(), "myerror")
 
-	t.Run("adds plugin flag", func(t *testing.T) {
-		setup()
-		pluginFlags.AddPluginFlags(cmd)
-
-		assert.Assert(t, pluginFlags != nil)
-		assert.Assert(t, cmd.Flags() != nil)
-
-		nameOnly, err := cmd.Flags().GetBool("name-only")
-		assert.Assert(t, err == nil)
-		assert.Assert(t, nameOnly == false)
-	})
+	err = NewKNError("")
+	assert.Equal(t, err.Error(), "")
 }

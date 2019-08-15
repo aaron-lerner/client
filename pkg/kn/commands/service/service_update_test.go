@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"gotest.tools/assert"
+	"gotest.tools/assert/cmp"
 
 	"github.com/knative/client/pkg/kn/commands"
 	servinglib "github.com/knative/client/pkg/serving"
@@ -166,6 +167,98 @@ func TestServiceUpdateImage(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateRevisionNameExplicit(t *testing.T) {
+	orig := newEmptyServiceBetaAPIStyle()
+
+	template, err := servinglib.RevisionTemplateOfService(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template.Name = "foo-asdf"
+
+	// Test user provides prefix
+	action, updated, _, err := fakeServiceUpdate(orig, []string{
+		"service", "update", "foo", "--revision-name", "foo-dogs", "--namespace", "bar", "--async"}, false)
+	assert.NilError(t, err)
+	if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+	template, err = servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	assert.Equal(t, "foo-dogs", template.Name)
+
+}
+
+func TestServiceUpdateRevisionNameGenerated(t *testing.T) {
+	orig := newEmptyServiceBetaAPIStyle()
+
+	template, err := servinglib.RevisionTemplateOfService(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template.Name = "foo-asdf"
+
+	// Test prefix added by command
+	action, updated, _, err := fakeServiceUpdate(orig, []string{
+		"service", "update", "foo", "--image", "gcr.io/foo/quux:xyzzy", "--namespace", "bar", "--async"}, false)
+	assert.NilError(t, err)
+	if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+
+	template, err = servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	assert.Assert(t, strings.HasPrefix(template.Name, "foo-"))
+	assert.Assert(t, !(template.Name == "foo-asdf"))
+}
+
+func TestServiceUpdateRevisionNameCleared(t *testing.T) {
+	orig := newEmptyServiceBetaAPIStyle()
+
+	template, err := servinglib.RevisionTemplateOfService(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Name = "foo-asdf"
+
+	action, updated, _, err := fakeServiceUpdate(orig, []string{
+		"service", "update", "foo", "--image", "gcr.io/foo/quux:xyzzy", "--namespace", "bar", "--revision-name=", "--async"}, false)
+
+	assert.NilError(t, err)
+	if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+
+	template, err = servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	assert.Assert(t, cmp.Equal(template.Name, ""))
+}
+
+func TestServiceUpdateRevisionNameNoMutationNoChange(t *testing.T) {
+	orig := newEmptyServiceBetaAPIStyle()
+
+	template, err := servinglib.RevisionTemplateOfService(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template.Name = "foo-asdf"
+
+	// Test prefix added by command
+	action, updated, _, err := fakeServiceUpdate(orig, []string{
+		"service", "update", "foo", "--namespace", "bar", "--async"}, false)
+	assert.NilError(t, err)
+	if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+
+	template, err = servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	assert.Equal(t, template.Name, "foo-asdf")
+}
+
 func TestServiceUpdateMaxMinScale(t *testing.T) {
 	original := newEmptyService()
 
@@ -232,11 +325,15 @@ func TestServiceUpdateEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	template.Spec.DeprecatedContainer.Env = []corev1.EnvVar{
+		{Name: "EXISTING", Value: "thing"},
+		{Name: "OTHEREXISTING"},
+	}
 
 	servinglib.UpdateImage(template, "gcr.io/foo/bar:baz")
 
 	action, updated, _, err := fakeServiceUpdate(orig, []string{
-		"service", "update", "foo", "-e", "TARGET=Awesome", "--async"}, false)
+		"service", "update", "foo", "-e", "TARGET=Awesome", "--env", "EXISTING-", "--env=OTHEREXISTING-=whatever", "--async"}, false)
 
 	if err != nil {
 		t.Fatal(err)
@@ -374,6 +471,60 @@ func TestServiceUpdateRequestsLimitsCPU_and_Memory(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateLabelWhenEmpty(t *testing.T) {
+	original := newEmptyService()
+
+	action, updated, _, err := fakeServiceUpdate(original, []string{
+		"service", "update", "foo", "-l", "a=mouse", "--label", "b=cookie", "-l=single", "--async"}, false)
+
+	if err != nil {
+		t.Fatal(err)
+	} else if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+
+	expected := map[string]string{
+		"a":      "mouse",
+		"b":      "cookie",
+		"single": "",
+	}
+	actual := updated.ObjectMeta.Labels
+	assert.DeepEqual(t, expected, actual)
+
+	template, err := servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	actual = template.ObjectMeta.Labels
+	assert.DeepEqual(t, expected, actual)
+}
+
+func TestServiceUpdateLabelExisting(t *testing.T) {
+	original := newEmptyService()
+	original.ObjectMeta.Labels = map[string]string{"already": "here", "tobe": "removed"}
+	originalTemplate, _ := servinglib.RevisionTemplateOfService(original)
+	originalTemplate.ObjectMeta.Labels = map[string]string{"already": "here", "tobe": "removed"}
+
+	action, updated, _, err := fakeServiceUpdate(original, []string{
+		"service", "update", "foo", "-l", "already=gone", "--label=tobe-", "--label", "b=", "--async"}, false)
+
+	if err != nil {
+		t.Fatal(err)
+	} else if !action.Matches("update", "services") {
+		t.Fatalf("Bad action %v", action)
+	}
+
+	expected := map[string]string{
+		"already": "gone",
+		"b":       "",
+	}
+	actual := updated.ObjectMeta.Labels
+	assert.DeepEqual(t, expected, actual)
+
+	template, err := servinglib.RevisionTemplateOfService(updated)
+	assert.NilError(t, err)
+	actual = template.ObjectMeta.Labels
+	assert.DeepEqual(t, expected, actual)
+}
+
 func newEmptyService() *v1alpha1.Service {
 	return &v1alpha1.Service{
 		TypeMeta: metav1.TypeMeta{
@@ -396,6 +547,23 @@ func newEmptyService() *v1alpha1.Service {
 			},
 		},
 	}
+}
+
+func newEmptyServiceBetaAPIStyle() *v1alpha1.Service {
+	ret := &v1alpha1.Service{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Service",
+			APIVersion: "knative.dev/v1alpha1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.ServiceSpec{},
+	}
+	ret.Spec.Template = &v1alpha1.RevisionTemplateSpec{}
+	ret.Spec.Template.Spec.Containers = []corev1.Container{{}}
+	return ret
 }
 
 func createMockServiceWithResources(t *testing.T, requestCPU, requestMemory, limitsCPU, limitsMemory string) *v1alpha1.Service {

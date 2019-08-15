@@ -16,6 +16,7 @@ package serving
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -28,12 +29,13 @@ import (
 // UpdateEnvVars gives the configuration all the env var values listed in the given map of
 // vars.  Does not touch any environment variables not mentioned, but it can add
 // new env vars and change the values of existing ones.
-func UpdateEnvVars(template *servingv1alpha1.RevisionTemplateSpec, vars map[string]string) error {
+func UpdateEnvVars(template *servingv1alpha1.RevisionTemplateSpec, toUpdate map[string]string, toRemove []string) error {
 	container, err := ContainerOfRevisionTemplate(template)
 	if err != nil {
 		return err
 	}
-	container.Env = updateEnvVarsFromMap(container.Env, vars)
+	envVars := updateEnvVarsFromMap(container.Env, toUpdate)
+	container.Env = removeEnvVars(envVars, toRemove)
 	return nil
 }
 
@@ -88,6 +90,17 @@ func UpdateAnnotation(template *servingv1alpha1.RevisionTemplateSpec, annotation
 	}
 
 	annoMap[annotation] = value
+	return nil
+}
+
+var ApiTooOldError = errors.New("the service is using too old of an API format for the operation")
+
+// UpdateName updates the revision name.
+func UpdateName(template *servingv1alpha1.RevisionTemplateSpec, name string) error {
+	if template.Spec.DeprecatedContainer != nil {
+		return ApiTooOldError
+	}
+	template.Name = name
 	return nil
 }
 
@@ -152,6 +165,26 @@ func UpdateResources(template *servingv1alpha1.RevisionTemplateSpec, requestsRes
 	return nil
 }
 
+// UpdateLabels updates the labels identically on a service and template.
+// Does not overwrite the entire Labels field, only makes the requested updates
+func UpdateLabels(service *servingv1alpha1.Service, template *servingv1alpha1.RevisionTemplateSpec, toUpdate map[string]string, toRemove []string) error {
+	if service.ObjectMeta.Labels == nil {
+		service.ObjectMeta.Labels = make(map[string]string)
+	}
+	if template.ObjectMeta.Labels == nil {
+		template.ObjectMeta.Labels = make(map[string]string)
+	}
+	for key, value := range toUpdate {
+		service.ObjectMeta.Labels[key] = value
+		template.ObjectMeta.Labels[key] = value
+	}
+	for _, key := range toRemove {
+		delete(service.ObjectMeta.Labels, key)
+		delete(template.ObjectMeta.Labels, key)
+	}
+	return nil
+}
+
 // =======================================================================================
 
 func updateEnvVarsFromMap(env []corev1.EnvVar, vars map[string]string) []corev1.EnvVar {
@@ -172,6 +205,18 @@ func updateEnvVarsFromMap(env []corev1.EnvVar, vars map[string]string) []corev1.
 					Name:  name,
 					Value: value,
 				})
+		}
+	}
+	return env
+}
+
+func removeEnvVars(env []corev1.EnvVar, toRemove []string) []corev1.EnvVar {
+	for _, name := range toRemove {
+		for i, envVar := range env {
+			if envVar.Name == name {
+				env = append(env[:i], env[i+1:]...)
+				break
+			}
 		}
 	}
 	return env
